@@ -1,4 +1,4 @@
-﻿require("dotenv").config();
+require("dotenv").config();
 
 const express = require("express");
 const OpenAI = require("openai");
@@ -19,182 +19,105 @@ const SPAM_BANS_FILE = "./spam_bans.json";
 let spamBans = {};
 
 try {
-
     if (fs.existsSync(SPAM_BANS_FILE)) {
-
-        spamBans =
-            JSON.parse(
-                fs.readFileSync(
-                    SPAM_BANS_FILE,
-                    "utf8"
-                ).replace(/^\uFEFF/, "")
-            );
-
+        spamBans = JSON.parse(
+            fs.readFileSync(SPAM_BANS_FILE, "utf8").replace(/^\uFEFF/, "")
+        );
     }
-
 } catch (error) {
-
-    console.error(
-        "BĹ‚Ä…d odczytu spam_bans.json:",
-        error
-    );
-
+    console.error("Błąd odczytu spam_bans.json:", error);
     spamBans = {};
-
 }
 
 function saveSpamBans() {
-
     fs.writeFileSync(
         SPAM_BANS_FILE,
-        JSON.stringify(
-            spamBans,
-            null,
-            2
-        ),
+        JSON.stringify(spamBans, null, 2),
         "utf8"
     );
-
 }
 
 // =====================================================
-// ANTYSPAM / LIMITY UĹ»YTKOWNIKĂ“W
+// ANTYSPAM / LIMITY UŻYTKOWNIKÓW
 // =====================================================
 
 const spamUsers = new Map();
 const globalMessages = [];
 
 const SPAM_CONFIG = {
-    minInterval: 3000,          // 3 sekundy
-    max10min: 25,               // 15 wiadomoĹ›ci / 10 min
-    max1hour: 50,               // 50 / godz.
-    max24hours: 80,            // 150 / 24 h
-
-    duplicateWindow: 30000,     // 30 sekund
-    duplicateLimit: 5,          // 5 identycznych
-
-    burstWindow: 30000,         // 30 sekund
-    burstLimit: 10,              // 10 wiadomoĹ›ci
-
-    fiveMinuteWindow: 300000,   // 5 minut
-    fiveMinuteLimit: 30,        // 30 wiadomoĹ›ci
-
-    globalWarning: 500,         // ostrzeĹĽenie / godz.
-    globalBlock: 1000           // blokada AI / godz.
+    minInterval: 3000,
+    max10min: 25,
+    max1hour: 50,
+    max24hours: 80,
+    duplicateWindow: 30000,
+    duplicateLimit: 5,
+    burstWindow: 30000,
+    burstLimit: 10,
+    fiveMinuteWindow: 300000,
+    fiveMinuteLimit: 30,
+    globalWarning: 500,
+    globalBlock: 1000
 };
 
 function cleanupTimes(times, windowMs, now) {
+    return times.filter(timestamp => now - timestamp <= windowMs);
+}
 
-    return times.filter(
-        timestamp => now - timestamp <= windowMs
-    );
-    function registerSpamStrike(senderId, user, now) {
-
+function registerSpamStrike(senderId, user, now) {
     user.strikes++;
-
-    console.warn(
-        `ANTYSPAM: ${senderId} - ` +
-        `strike ${user.strikes}`
-    );
+    console.warn(`ANTYSPAM: ${senderId} - strike ${user.strikes}`);
 
     if (user.strikes >= 3) {
-
         spamBans[senderId] = {
-            bannedUntil:
-                now + 7 * 24 * 60 * 60000,
-
-            strikes:
-                user.strikes,
-
-            reason:
-                "spam"
+            bannedUntil: now + 7 * 24 * 60 * 60000,
+            strikes: user.strikes,
+            reason: "spam"
         };
-
         saveSpamBans();
-
-        console.warn(
-            `ANTYSPAM: ${senderId} - ` +
-            `BAN 7 DNI.`
-        );
-
+        console.warn(`ANTYSPAM: ${senderId} - BAN 7 DNI.`);
         return true;
     }
-
     return false;
 }
-}
+
 function checkPermanentSpamBan(senderId) {
-
     const now = Date.now();
+    const ban = spamBans[senderId];
 
-    const ban =
-        spamBans[senderId];
+    if (!ban) return { banned: false };
 
-    if (!ban) {
-
-        return {
-            banned: false
-        };
-
-    }
-
-    if (
-        ban.bannedUntil &&
-        ban.bannedUntil > now
-    ) {
-
+    if (ban.bannedUntil && ban.bannedUntil > now) {
         return {
             banned: true,
-            remaining:
-                Math.ceil(
-                    (ban.bannedUntil - now) / 1000
-                ),
-            strikes:
-                ban.strikes || 0
+            remaining: Math.ceil((ban.bannedUntil - now) / 1000),
+            strikes: ban.strikes || 0
         };
-
     }
 
     delete spamBans[senderId];
-
     saveSpamBans();
-
-    return {
-        banned: false
-    };
-
+    return { banned: false };
 }
 
 function checkSpam(senderId, message, imageUrl) {
-
     const now = Date.now();
-        const existingUser = spamUsers.get(senderId);
+    const existingUser = spamUsers.get(senderId);
 
     if (
         existingUser &&
         existingUser.lastAcceptedAt &&
-        now - existingUser.lastAcceptedAt <
-        SPAM_CONFIG.minInterval
+        now - existingUser.lastAcceptedAt < SPAM_CONFIG.minInterval
     ) {
-
         console.warn(
             `ANTYSPAM: ${senderId} - ` +
-            `wiadomoĹ›Ä‡ zbyt szybko. ` +
-            `OdstÄ™p: ${now - existingUser.lastAcceptedAt} ms`
+            `wiadomość zbyt szybko. ` +
+            `Odstęp: ${now - existingUser.lastAcceptedAt} ms`
         );
-
-        return {
-            allowed: false,
-            reason: "too_fast"
-        };
-
+        return { allowed: false, reason: "too_fast" };
     }
 
-    let user =
-        spamUsers.get(senderId);
-
+    let user = spamUsers.get(senderId);
     if (!user) {
-
         user = {
             times: [],
             blockedUntil: 0,
@@ -203,652 +126,241 @@ function checkSpam(senderId, message, imageUrl) {
             strikes: 0,
             lastAcceptedAt: 0
         };
-
-        spamUsers.set(
-            senderId,
-            user
-        );
-
+        spamUsers.set(senderId, user);
     }
 
-    // -----------------------------------------
-    // AKTUALNA BLOKADA
-    // -----------------------------------------
-
     if (user.blockedUntil > now) {
-
         return {
             allowed: false,
             reason: "blocked",
-            remaining:
-                Math.ceil(
-                    (user.blockedUntil - now) / 1000
-                )
+            remaining: Math.ceil((user.blockedUntil - now) / 1000)
         };
-
     }
 
-    // -----------------------------------------
-    // PORZÄ„DKOWANIE HISTORII
-    // -----------------------------------------
+    user.times = cleanupTimes(user.times, 86400000, now);
+    user.duplicateTimes = cleanupTimes(
+        user.duplicateTimes,
+        SPAM_CONFIG.duplicateWindow,
+        now
+    );
 
-    user.times =
-        cleanupTimes(
-            user.times,
-            86400000,
-            now
-        );
+    const messageKey = JSON.stringify({
+        message: (message || "").trim().toLowerCase(),
+        image: imageUrl || ""
+    });
 
-    user.duplicateTimes =
-        cleanupTimes(
-            user.duplicateTimes,
-            SPAM_CONFIG.duplicateWindow,
-            now
-        );
-
-    // -----------------------------------------
-    // IDENTYCZNA WIADOMOĹšÄ†
-    // -----------------------------------------
-
-    const messageKey =
-        JSON.stringify({
-            message:
-                (message || "")
-                    .trim()
-                    .toLowerCase(),
-            image:
-                imageUrl || ""
-        });
-
-    if (
-        user.lastMessageKey === messageKey
-    ) {
-
+    if (user.lastMessageKey === messageKey) {
         user.duplicateTimes.push(now);
-
     } else {
-
-        user.lastMessageKey =
-            messageKey;
-
+        user.lastMessageKey = messageKey;
         user.duplicateTimes = [now];
-
     }
 
-    if (
-        user.duplicateTimes.length >=
-        SPAM_CONFIG.duplicateLimit
-    ) {
-
-        registerSpamStrike(
-
-
-            senderId,
-
-
-            user,
-
-
-            now
-
-
-        );
-
+    if (user.duplicateTimes.length >= SPAM_CONFIG.duplicateLimit) {
+        registerSpamStrike(senderId, user, now);
         const blockMinutes =
-            user.strikes >= 3
-                ? 1440
-                : user.strikes === 2
-                    ? 120
-                    : 30;
-
-        user.blockedUntil =
-            now +
-            blockMinutes * 60000;
-
+            user.strikes >= 3 ? 1440 :
+            user.strikes === 2 ? 120 : 30;
+        user.blockedUntil = now + blockMinutes * 60000;
         console.log(
             `ANTYSPAM: ${senderId} - ` +
-            `identyczne wiadomoĹ›ci. ` +
-            `Blokada ${blockMinutes} min.`
+            `identyczne wiadomości. Blokada ${blockMinutes} min.`
         );
-
-        return {
-            allowed: false,
-            reason: "duplicate"
-        };
-
+        return { allowed: false, reason: "duplicate" };
     }
 
-    // -----------------------------------------
-    // MINIMALNY ODSTÄP 3 SEKUND
-    // -----------------------------------------
-
-    const lastMessage =
-        user.times[
-            user.times.length - 1
-        ];
-
-    if (
-        lastMessage &&
-        now - lastMessage <
-        SPAM_CONFIG.minInterval
-    ) {
-
-        return {
-            allowed: false,
-            reason: "too_fast"
-        };
-
+    const lastMessage = user.times[user.times.length - 1];
+    if (lastMessage && now - lastMessage < SPAM_CONFIG.minInterval) {
+        return { allowed: false, reason: "too_fast" };
     }
 
-    // -----------------------------------------
-    // LIMITY CZASOWE
-    // -----------------------------------------
+    const last10min = user.times.filter(t => now - t <= 600000);
+    const lastHour = user.times.filter(t => now - t <= 3600000);
 
-    const last10min =
-        user.times.filter(
-            t => now - t <= 600000
+    if (last10min.length >= SPAM_CONFIG.max10min) {
+        registerSpamStrike(senderId, user, now);
+        user.blockedUntil = now + (
+            user.strikes >= 3 ? 86400000 :
+            user.strikes === 2 ? 120 * 60000 : 30 * 60000
         );
-
-    const lastHour =
-        user.times.filter(
-            t => now - t <= 3600000
-        );
-
-    if (
-        last10min.length >=
-        SPAM_CONFIG.max10min
-    ) {
-
-        registerSpamStrike(
-
-
-            senderId,
-
-
-            user,
-
-
-            now
-
-
-        );
-
-        user.blockedUntil =
-            now +
-            (user.strikes >= 3
-                ? 86400000
-                : user.strikes === 2
-                    ? 120 * 60000
-                    : 30 * 60000);
-
-        console.log(
-            `ANTYSPAM: ${senderId} - ` +
-            `przekroczono 25/10 min.`
-        );
-
-        return {
-            allowed: false,
-            reason: "10min"
-        };
-
+        console.log(`ANTYSPAM: ${senderId} - przekroczono 25/10 min.`);
+        return { allowed: false, reason: "10min" };
     }
 
-    if (
-        lastHour.length >=
-        SPAM_CONFIG.max1hour
-    ) {
-
-        registerSpamStrike(
-
-
-            senderId,
-
-
-            user,
-
-
-            now
-
-
+    if (lastHour.length >= SPAM_CONFIG.max1hour) {
+        registerSpamStrike(senderId, user, now);
+        user.blockedUntil = now + (
+            user.strikes >= 3 ? 86400000 : 3600000
         );
-
-        user.blockedUntil =
-            now +
-            (user.strikes >= 3
-                ? 86400000
-                : 3600000);
-
-        console.log(
-            `ANTYSPAM: ${senderId} - ` +
-            `przekroczono 50/h.`
-        );
-
-        return {
-            allowed: false,
-            reason: "hour"
-        };
-
+        console.log(`ANTYSPAM: ${senderId} - przekroczono 50/h.`);
+        return { allowed: false, reason: "hour" };
     }
 
-    if (
-        user.times.length >=
-        SPAM_CONFIG.max24hours
-    ) {
-
-        registerSpamStrike(
-
-
-            senderId,
-
-
-            user,
-
-
-            now
-
-
-        );
-
-        user.blockedUntil =
-            now +
-            86400000;
-
-        console.log(
-            `ANTYSPAM: ${senderId} - ` +
-            `przekroczono 150/24h.`
-        );
-
-        return {
-            allowed: false,
-            reason: "day"
-        };
-
+    if (user.times.length >= SPAM_CONFIG.max24hours) {
+        registerSpamStrike(senderId, user, now);
+        user.blockedUntil = now + 86400000;
+        console.log(`ANTYSPAM: ${senderId} - przekroczono 150/24h.`);
+        return { allowed: false, reason: "day" };
     }
 
-    // -----------------------------------------
-    // BURST 10 / 30 SEKUND
-    // -----------------------------------------
-
-    const burst =
-        user.times.filter(
-            t =>
-                now - t <=
-                SPAM_CONFIG.burstWindow
-        );
-
-    if (
-        burst.length >=
-        SPAM_CONFIG.burstLimit
-    ) {
-
-        registerSpamStrike(
-
-
-            senderId,
-
-
-            user,
-
-
-            now
-
-
-        );
-
-        user.blockedUntil =
-            now +
-            10 * 60000;
-
-        console.log(
-            `ANTYSPAM: ${senderId} - ` +
-            `10 wiadomoĹ›ci / 30 sekund.`
-        );
-
-        return {
-            allowed: false,
-            reason: "burst"
-        };
-
+    const burst = user.times.filter(
+        t => now - t <= SPAM_CONFIG.burstWindow
+    );
+    if (burst.length >= SPAM_CONFIG.burstLimit) {
+        registerSpamStrike(senderId, user, now);
+        user.blockedUntil = now + 10 * 60000;
+        console.log(`ANTYSPAM: ${senderId} - 10 wiadomości / 30 sekund.`);
+        return { allowed: false, reason: "burst" };
     }
 
-    // -----------------------------------------
-    // 30 / 5 MINUT
-    // -----------------------------------------
-
-    const fiveMinutes =
-        user.times.filter(
-            t =>
-                now - t <=
-                SPAM_CONFIG.fiveMinuteWindow
-        );
-
-    if (
-        fiveMinutes.length >=
-        SPAM_CONFIG.fiveMinuteLimit
-    ) {
-
-        registerSpamStrike(
-
-
-            senderId,
-
-
-            user,
-
-
-            now
-
-
-        );
-
-        user.blockedUntil =
-            now +
-            60 * 60000;
-
-        console.log(
-            `ANTYSPAM: ${senderId} - ` +
-            `30 wiadomoĹ›ci / 5 minut.`
-        );
-
-        return {
-            allowed: false,
-            reason: "5min"
-        };
-
+    const fiveMinutes = user.times.filter(
+        t => now - t <= SPAM_CONFIG.fiveMinuteWindow
+    );
+    if (fiveMinutes.length >= SPAM_CONFIG.fiveMinuteLimit) {
+        registerSpamStrike(senderId, user, now);
+        user.blockedUntil = now + 60 * 60000;
+        console.log(`ANTYSPAM: ${senderId} - 30 wiadomości / 5 minut.`);
+        return { allowed: false, reason: "5min" };
     }
-
-    // -----------------------------------------
-    // WIADOMOĹšÄ† PRZECHODZI
-    // -----------------------------------------
 
     user.lastAcceptedAt = now;
-
-user.times.push(now);
-
-return {
-    allowed: true
-};
-
+    user.times.push(now);
+    return { allowed: true };
 }
-
 
 // =====================================================
 // GLOBALNY BEZPIECZNIK AI
 // =====================================================
 
 function checkGlobalLimit() {
+    const now = Date.now();
 
-    const now =
-        Date.now();
-
-    while (
-        globalMessages.length &&
-        now - globalMessages[0] > 3600000
-    ) {
-
+    while (globalMessages.length && now - globalMessages[0] > 3600000) {
         globalMessages.shift();
-
     }
 
-    if (
-        globalMessages.length >=
-        SPAM_CONFIG.globalBlock
-    ) {
-
-        console.error(
-            "!!! GLOBALNY LIMIT AI !!!"
-        );
-
+    if (globalMessages.length >= SPAM_CONFIG.globalBlock) {
+        console.error("!!! GLOBALNY LIMIT AI !!!");
         return false;
-
     }
 
     globalMessages.push(now);
 
-    if (
-        globalMessages.length >=
-        SPAM_CONFIG.globalWarning
-    ) {
-
+    if (globalMessages.length >= SPAM_CONFIG.globalWarning) {
         console.warn(
-            `UWAGA: ${globalMessages.length}` +
-            ` wiadomoĹ›ci AI w ciÄ…gu godziny.`
+            `UWAGA: ${globalMessages.length} wiadomości AI w ciągu godziny.`
         );
-
     }
-
     return true;
-
 }
+
 // =====================================================
 // KATEGORIE SPOTTED
 // =====================================================
 
 const CATEGORIES = {
     wypadek_zdarzenie: {
-        label: "đźš¨ WYPADEK / ZDARZENIE",
+        label: "🚨 WYPADEK / ZDARZENIE",
         hashtag: "#WypadekZdarzenie"
     },
-
     zwierzeta: {
-        label: "đźľ ZAGINIONE / ZNALEZIONE ZWIERZÄ",
+        label: "🐾 ZAGINIONE / ZNALEZIONE ZWIERZĘ",
         hashtag: "#ZaginioneZwierzeta"
     },
-
     droga: {
-        label: "đźš— UTRUDNIENIA NA DRODZE",
+        label: "🚧 UTRUDNIENIA NA DRODZE",
         hashtag: "#UtrudnieniaNaDrodze"
     },
-
     osoba: {
-        label: "đź”Ť ZAGINÄ„Ĺ / ZNALEZIONO OSOBÄ",
+        label: "🔎 ZAGINĄŁ / ZNALEZIONO OSOBĘ",
         hashtag: "#ZaginionaOsoba"
     },
-
     informacja: {
-        label: "đź“˘ WAĹ»NA INFORMACJA",
+        label: "📢 WAŻNA INFORMACJA",
         hashtag: "#WaznaInformacja"
     },
-
     firma: {
-        label: "đźŹŞ FIRMA / REKLAMA",
+        label: "🏪 FIRMA / REKLAMA",
         hashtag: "#FirmaReklama"
     },
-
     ogloszenia: {
-        label: "đźŹ  OGĹOSZENIA",
+        label: "📢 OGŁOSZENIA",
         hashtag: "#Ogloszenia"
     },
-
     zdjecie_film: {
-        label: "đź“¸ ZDJÄCIE / FILM",
+        label: "📸 ZDJĘCIE / FILM",
         hashtag: "#ZdjecieFilm"
     }
 };
 
-
-// =====================================================
-// POBIERANIE KATEGORII
-// =====================================================
-
 function getCategory(category) {
-
-    return (
-        CATEGORIES[category] ||
-        CATEGORIES.ogloszenia
-    );
-
+    return CATEGORIES[category] || CATEGORIES.ogloszenia;
 }
-
-
-// =====================================================
-// WYCIÄ„GANIE KATEGORII Z ODPOWIEDZI AI
-// =====================================================
 
 function extractCategory(text) {
-
-    if (!text) {
-
-        return "ogloszenia";
-
-    }
-
-
-    const match =
-        text.match(
-            /\[KATEGORIA\]\s*([^\s\]]+)\s*\[\/KATEGORIA\]/i
-        );
-
-
-    if (!match) {
-
-        return "ogloszenia";
-
-    }
-
-
-    const value =
-        match[1]
-            .trim()
-            .toLowerCase();
-
-
-    if (CATEGORIES[value]) {
-
-        return value;
-
-    }
-
-
-    return "ogloszenia";
-
+    if (!text) return "ogloszenia";
+    const match = text.match(
+        /\[KATEGORIA\]\s*([^\s\]]+)\s*\[\/KATEGORIA\]/i
+    );
+    if (!match) return "ogloszenia";
+    const value = match[1].trim().toLowerCase();
+    return CATEGORIES[value] ? value : "ogloszenia";
 }
 
-
 // =====================================================
-// PAMIÄÄ†
+// PAMIĘĆ
 // =====================================================
 
 function loadJSON(file) {
-
     try {
-
         if (fs.existsSync(file)) {
-
-            return JSON.parse(
-                fs.readFileSync(file, "utf8")
-            );
-
+            return JSON.parse(fs.readFileSync(file, "utf8"));
         }
-
     } catch (error) {
-
-        console.error(
-            "BĹ‚Ä…d odczytu:",
-            file,
-            error
-        );
-
+        console.error("Błąd odczytu:", file, error);
     }
-
     return {};
-
 }
-
 
 function saveJSON(file, data) {
-
     try {
-
-        fs.writeFileSync(
-            file,
-            JSON.stringify(data, null, 2),
-            "utf8"
-        );
-
+        fs.writeFileSync(file, JSON.stringify(data, null, 2), "utf8");
     } catch (error) {
-
-        console.error(
-            "BĹ‚Ä…d zapisu:",
-            file,
-            error
-        );
-
+        console.error("Błąd zapisu:", file, error);
     }
-
 }
 
-
-let conversations =
-    loadJSON(CONVERSATIONS_FILE);
-
-let pendingPosts =
-    loadJSON(PENDING_POSTS_FILE);
-
-let userImages =
-    loadJSON(USER_IMAGES_FILE);
-
+let conversations = loadJSON(CONVERSATIONS_FILE);
+let pendingPosts = loadJSON(PENDING_POSTS_FILE);
+let userImages = loadJSON(USER_IMAGES_FILE);
 
 // =====================================================
 // FACEBOOK MESSENGER
 // =====================================================
 
-async function sendFacebookMessage(
-    recipientId,
-    text
-) {
-
+async function sendFacebookMessage(recipientId, text) {
     const url =
         `https://graph.facebook.com/v23.0/${process.env.PAGE_ID}/messages`;
 
+    const response = await fetch(url, {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json; charset=utf-8"
+        },
+        body: JSON.stringify({
+            recipient: { id: recipientId },
+            message: { text: text },
+            access_token: process.env.PAGE_ACCESS_TOKEN
+        })
+    });
 
-    const response =
-        await fetch(url, {
-
-            method: "POST",
-
-            headers: {
-                "Content-Type": "application/json; charset=utf-8"
-            },
-
-            body: JSON.stringify({
-
-                recipient: {
-                    id: recipientId
-                },
-
-                message: {
-                    text: text
-                },
-
-                access_token:
-                    process.env.PAGE_ACCESS_TOKEN
-
-            })
-
-        });
-
-
-    const data =
-        await response.json();
-
-
-    console.log(
-        "Facebook Messenger odpowiedziaĹ‚:",
-        data
-    );
-
+    const data = await response.json();
+    console.log("Facebook Messenger odpowiedział:", data);
 
     if (!response.ok) {
-
-        throw new Error(
-            JSON.stringify(data)
-        );
-
+        throw new Error(JSON.stringify(data));
     }
-
 }
-
 
 // =====================================================
 // PUBLIKOWANIE POSTA NA FACEBOOKU
@@ -859,1093 +371,485 @@ async function publishFacebookPost(
     imageUrl = null,
     category = "ogloszenia"
 ) {
+    const pageId = process.env.PAGE_ID;
+    const accessToken = process.env.PAGE_ACCESS_TOKEN;
 
-    const pageId =
-        process.env.PAGE_ID;
+    if (!pageId) throw new Error("Brak PAGE_ID w pliku .env");
+    if (!accessToken) throw new Error("Brak PAGE_ACCESS_TOKEN w pliku .env");
 
-    const accessToken =
-        process.env.PAGE_ACCESS_TOKEN;
-
-
-    if (!pageId) {
-
-        throw new Error(
-            "Brak PAGE_ID w pliku .env"
-        );
-
-    }
-
-
-    if (!accessToken) {
-
-        throw new Error(
-            "Brak PAGE_ACCESS_TOKEN w pliku .env"
-        );
-
-    }
-
-
-    const categoryInfo =
-        getCategory(category);
-
-
-    // =================================================
-    // TEKST PUBLIKOWANY NA FACEBOOKU
-    // =================================================
-
+    const categoryInfo = getCategory(category);
     const facebookText =
         `${categoryInfo.label}\n\n${text}\n\n${categoryInfo.hashtag} #SpottedBrodnica`;
 
-
-    // =================================================
-    // POST ZE ZDJÄCIEM
-    // =================================================
-
     if (imageUrl) {
-
-        console.log(
-            "========================================"
-        );
-
-        console.log(
-            "Publikowanie posta ze zdjÄ™ciem..."
-        );
-
-        console.log(
-            "Kategoria:",
-            categoryInfo.label
-        );
-
-        console.log(
-            "URL zdjÄ™cia:",
-            imageUrl
-        );
-
-
-        // ---------------------------------------------
-        // POBIERAMY ZDJÄCIE Z MESSENGERA
-        // ---------------------------------------------
+        console.log("========================================");
+        console.log("Publikowanie posta ze zdjęciem...");
+        console.log("Kategoria:", categoryInfo.label);
+        console.log("URL zdjęcia:", imageUrl);
 
         let imageResponse;
-
-
         try {
-
-            imageResponse =
-                await fetch(imageUrl);
-
+            imageResponse = await fetch(imageUrl);
         } catch (error) {
-
-            console.error(
-                "BĹ‚Ä…d pobierania zdjÄ™cia:",
-                error
-            );
-
-            throw new Error(
-                "Nie udaĹ‚o siÄ™ pobraÄ‡ zdjÄ™cia z Messengera."
-            );
-
+            console.error("Błąd pobierania zdjęcia:", error);
+            throw new Error("Nie udało się pobrać zdjęcia z Messengera.");
         }
 
-
-        // ---------------------------------------------
-        // DRUGA PRĂ“BA Z TOKENEM
-        // ---------------------------------------------
-
         if (!imageResponse.ok) {
-
             console.log(
-                "Pierwsza prĂłba pobrania zdjÄ™cia nieudana.",
-                "HTTP:",
-                imageResponse.status
+                "Pierwsza próba pobrania zdjęcia nieudana.",
+                "HTTP:", imageResponse.status
             );
-
-
             try {
-
-                imageResponse =
-                    await fetch(
-                        imageUrl,
-                        {
-                            headers: {
-
-                                Authorization:
-                                    `Bearer ${accessToken}`
-
-                            }
-                        }
-                    );
-
+                imageResponse = await fetch(imageUrl, {
+                    headers: {
+                        Authorization: `Bearer ${accessToken}`
+                    }
+                });
             } catch (error) {
-
                 console.error(
-                    "Druga prĂłba pobrania zdjÄ™cia nieudana:",
+                    "Druga próba pobrania zdjęcia nieudana:",
                     error
                 );
-
             }
-
         }
-
 
         if (!imageResponse.ok) {
-
             throw new Error(
-                `Nie udaĹ‚o siÄ™ pobraÄ‡ zdjÄ™cia z Messengera. HTTP ${imageResponse.status}`
+                `Nie udało się pobrać zdjęcia z Messengera. HTTP ${imageResponse.status}`
             );
-
         }
 
-
-        // ---------------------------------------------
-        // POBIERAMY PLIK
-        // ---------------------------------------------
-
-        const imageBuffer =
-            await imageResponse.arrayBuffer();
-
-
+        const imageBuffer = await imageResponse.arrayBuffer();
         const contentType =
-            imageResponse.headers.get(
-                "content-type"
-            ) ||
-            "image/jpeg";
+            imageResponse.headers.get("content-type") || "image/jpeg";
 
+        console.log("Typ zdjęcia:", contentType);
+        console.log("Rozmiar zdjęcia:", imageBuffer.byteLength, "bajtów");
 
-        console.log(
-            "Typ zdjÄ™cia:",
-            contentType
-        );
+        const blob = new Blob([imageBuffer], { type: contentType });
+        const formData = new FormData();
 
-
-        console.log(
-            "Rozmiar zdjÄ™cia:",
-            imageBuffer.byteLength,
-            "bajtĂłw"
-        );
-
-
-        // ---------------------------------------------
-        // TWORZYMY BLOB
-        // ---------------------------------------------
-
-        const blob =
-            new Blob(
-                [
-                    imageBuffer
-                ],
-                {
-                    type: contentType
-                }
-            );
-
-
-        // ---------------------------------------------
-        // FORM DATA DLA FACEBOOK
-        // ---------------------------------------------
-
-        const formData =
-            new FormData();
-
-
-        formData.append(
-            "source",
-            blob,
-            "spotted.jpg"
-        );
-
-
-        formData.append(
-            "message",
-            facebookText
-        );
-
-
-        formData.append(
-            "access_token",
-            accessToken
-        );
-
-
-        // ---------------------------------------------
-        // FACEBOOK PHOTOS API
-        // ---------------------------------------------
+        formData.append("source", blob, "spotted.jpg");
+        formData.append("message", facebookText);
+        formData.append("access_token", accessToken);
 
         const url =
             `https://graph.facebook.com/v23.0/${pageId}/photos`;
 
+        console.log("Wysyłam zdjęcie do Facebooka...");
 
-        console.log(
-            "WysyĹ‚am zdjÄ™cie do Facebooka..."
-        );
+        const response = await fetch(url, {
+            method: "POST",
+            body: formData
+        });
 
-
-        const response =
-            await fetch(
-                url,
-                {
-                    method: "POST",
-                    body: formData
-                }
-            );
-
-
-        const data =
-            await response.json();
-
-
-        console.log(
-            "Facebook odpowiedziaĹ‚:",
-            data
-        );
-
+        const data = await response.json();
+        console.log("Facebook odpowiedział:", data);
 
         if (!response.ok || data.error) {
-
-            throw new Error(
-                JSON.stringify(data)
-            );
-
+            throw new Error(JSON.stringify(data));
         }
 
-
-        console.log(
-            "========================================"
-        );
-
-        console.log(
-            "POST ZE ZDJÄCIEM OPUBLIKOWANY!"
-        );
-
-        console.log(
-            "ID:",
-            data.id
-        );
-
-        console.log(
-            "========================================"
-        );
-
+        console.log("========================================");
+        console.log("POST ZE ZDJĘCIEM OPUBLIKOWANY!");
+        console.log("ID:", data.id);
+        console.log("========================================");
 
         return data;
-
     }
 
-
-    // =================================================
-    // POST BEZ ZDJÄCIA
-    // =================================================
-
-    console.log(
-        "PublikujÄ™ post tekstowy..."
-    );
-
-
-    console.log(
-        "Kategoria:",
-        categoryInfo.label
-    );
-
+    console.log("Publikuję post tekstowy...");
+    console.log("Kategoria:", categoryInfo.label);
 
     const url =
         `https://graph.facebook.com/v23.0/${pageId}/feed`;
 
+    const response = await fetch(url, {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json; charset=utf-8"
+        },
+        body: JSON.stringify({
+            message: facebookText,
+            access_token: accessToken
+        })
+    });
 
-    const response =
-        await fetch(
-            url,
-            {
-
-                method: "POST",
-
-                headers: {
-
-                    "Content-Type":
-                        "application/json; charset=utf-8"
-
-                },
-
-                body: JSON.stringify({
-
-                    message:
-                        facebookText,
-
-                    access_token:
-                        accessToken
-
-                })
-
-            }
-        );
-
-
-    const data =
-        await response.json();
-
-
-    console.log(
-        "Facebook publikacja posta:",
-        data
-    );
-
+    const data = await response.json();
+    console.log("Facebook publikacja posta:", data);
 
     if (!response.ok || data.error) {
-
-        throw new Error(
-            JSON.stringify(data)
-        );
-
+        throw new Error(JSON.stringify(data));
     }
 
-
-    console.log(
-        "POST TEKSTOWY OPUBLIKOWANY!"
-    );
-
-
+    console.log("POST TEKSTOWY OPUBLIKOWANY!");
     return data;
-
 }
-
 
 // =====================================================
 // SPRAWDZENIE "TAK"
 // =====================================================
 
 function isApproval(text) {
+    if (!text) return false;
 
-    if (!text) {
-
-        return false;
-
-    }
-
-
-    const value =
-        text
-            .trim()
-            .toLowerCase()
-            .replace(/[.!?,]/g, "")
-            .replace(/\s+/g, " ");
-
+    const value = text
+        .trim()
+        .toLowerCase()
+        .replace(/[.!?,]/g, "")
+        .replace(/\s+/g, " ");
 
     const approvals = [
-
-        "tak",
-        "yes",
-        "zatwierdzam",
-        "zatwierdzone",
-        "publikuj",
-        "opublikuj",
-        "moĹĽesz publikowaÄ‡",
-        "mozna publikowac",
-        "moĹĽna publikowaÄ‡",
-        "zgadzam siÄ™",
-        "zgadzam sie",
-        "ok",
-        "okej",
-        "okey",
-        "dobrze",
-
-        "tak zatwierdzam",
-        "tak publikuj",
-        "tak opublikuj",
-        "tak moĹĽna",
-        "tak mozna",
-        "tak zgadzam siÄ™",
+        "tak", "yes", "zatwierdzam", "zatwierdzone", "publikuj",
+        "opublikuj", "możesz publikować", "mozna publikowac",
+        "można publikować", "zgadzam się", "zgadzam sie", "ok", "okej",
+        "okey", "dobrze", "tak zatwierdzam", "tak publikuj",
+        "tak opublikuj", "tak można", "tak mozna", "tak zgadzam się",
         "tak zgadzam sie"
-
     ];
 
-
     return approvals.includes(value);
-
 }
 
-
 // =====================================================
-// WYCIÄ„GANIE OGĹOSZENIA
+// WYCIĄGANIE OGŁOSZENIA
 // =====================================================
 
 function extractPost(text) {
-
-    if (!text) {
-
-        return null;
-
-    }
-
-
-    const match =
-        text.match(
-            /\[OGLOSZENIE\]([\s\S]*?)\[\/OGLOSZENIE\]/i
-        );
-
-
-    if (!match) {
-
-        return null;
-
-    }
-
-
+    if (!text) return null;
+    const match = text.match(
+        /\[OGLOSZENIE\]([\s\S]*?)\[\/OGLOSZENIE\]/i
+    );
+    if (!match) return null;
     return match[1].trim();
-
 }
 
-
 // =====================================================
-// STRONA GĹĂ“WNA
+// STRONA GŁÓWNA
 // =====================================================
 
-app.get(
-    "/",
-    (req, res) => {
-
-        res.send(
-            "Spotted Brodnica AI dziaĹ‚a!"
-        );
-
-    }
-);
-
+app.get("/", (req, res) => {
+    res.send("Spotted Brodnica AI działa!");
+});
 
 // =====================================================
 // FACEBOOK WEBHOOK - WERYFIKACJA
 // =====================================================
 
-app.get(
-    "/webhook",
-    (req, res) => {
+app.get("/webhook", (req, res) => {
+    const VERIFY_TOKEN = "brodnica1234";
+    const mode = req.query["hub.mode"];
+    const token = req.query["hub.verify_token"];
+    const challenge = req.query["hub.challenge"];
 
-        const VERIFY_TOKEN =
-            "brodnica1234";
+    if (mode === "subscribe" && token === VERIFY_TOKEN) {
+        console.log("Facebook zweryfikował webhook!");
+        res.status(200).send(challenge);
+    } else {
+        res.sendStatus(403);
+    }
+});
 
+// =====================================================
+// FACEBOOK WEBHOOK - WIADOMOŚCI
+// =====================================================
 
-        const mode =
-            req.query["hub.mode"];
+app.post("/webhook", async (req, res) => {
+    console.log("========================================");
+    console.log("Otrzymano wiadomość z Facebooka:");
+    console.log(JSON.stringify(req.body, null, 2));
 
-
-        const token =
-            req.query["hub.verify_token"];
-
-
-        const challenge =
-            req.query["hub.challenge"];
-
-
-        if (
-            mode === "subscribe" &&
-            token === VERIFY_TOKEN
-        ) {
-
-            console.log(
-                "Facebook zweryfikowaĹ‚ webhook!"
-            );
-
-
-            res
-                .status(200)
-                .send(challenge);
-
-        } else {
-
-            res.sendStatus(403);
-
+    try {
+        const event = req.body?.entry?.[0]?.messaging?.[0];
+        if (!event) {
+            res.sendStatus(200);
+            return;
         }
 
-    }
-);
+        const message = event?.message?.text;
+        const imageUrl = event?.message?.attachments?.find(
+            attachment => attachment.type === "image"
+        )?.payload?.url;
+        const senderId = event?.sender?.id;
 
+        console.log("ID użytkownika:", senderId);
+        console.log("Treść:", message || "(brak)");
+        console.log("Zdjęcie:", imageUrl || "(brak)");
 
-// =====================================================
-// FACEBOOK WEBHOOK - WIADOMOĹšCI
-// =====================================================
+        if (!senderId) {
+            res.sendStatus(200);
+            return;
+        }
 
-app.post(
-    "/webhook",
-    async (req, res) => {
+        // =========================================
+        // ANTYSPAM
+        // =========================================
 
-        console.log(
-            "========================================"
-        );
+        const spamBan = checkPermanentSpamBan(senderId);
+        if (spamBan.banned) {
+            console.warn(
+                `ANTYSPAM: ${senderId} - ` +
+                `AKTYWNY BAN. Pozostało ${spamBan.remaining} sekund.`
+            );
+            res.sendStatus(200);
+            return;
+        }
 
-
-        console.log(
-            "Otrzymano wiadomoĹ›Ä‡ z Facebooka:"
-        );
-
-
-        console.log(
-            JSON.stringify(
-                req.body,
-                null,
-                2
-            )
-        );
-
-
-        try {
-
-            const event =
-                req.body?.entry?.[0]?.messaging?.[0];
-
-
-            if (!event) {
-
-                res.sendStatus(200);
-
-                return;
-
-            }
-
-
-            // =========================================
-            // WIADOMOĹšÄ† TEKSTOWA
-            // =========================================
-
-            const message =
-                event?.message?.text;
-
-
-            // =========================================
-            // ZDJÄCIE
-            // =========================================
-
-            const imageUrl =
-                event?.message?.attachments?.find(
-                    attachment =>
-                        attachment.type === "image"
-                )?.payload?.url;
-
-
-            // =========================================
-            // ID UĹ»YTKOWNIKA
-            // =========================================
-
-            const senderId =
-                event?.sender?.id;
-
-
+        const spamCheck = checkSpam(senderId, message, imageUrl);
+        if (!spamCheck.allowed) {
             console.log(
-                "ID uĹĽytkownika:",
-                senderId
+                "ANTYSPAM - odrzucono wiadomość:",
+                senderId,
+                spamCheck.reason
+            );
+            res.sendStatus(200);
+            return;
+        }
+
+        // =========================================
+        // GLOBALNY LIMIT AI
+        // =========================================
+
+        if (!checkGlobalLimit()) {
+            console.error(
+                "GLOBALNY LIMIT - AI NIE ZOSTAŁO URUCHOMIONE."
+            );
+            res.sendStatus(200);
+            return;
+        }
+
+        // =========================================
+        // ZAPISUJEMY OSTATNIE ZDJĘCIE
+        // =========================================
+
+        if (imageUrl) {
+            userImages[senderId] = imageUrl;
+            saveJSON(USER_IMAGES_FILE, userImages);
+            console.log("Zapamiętano zdjęcie użytkownika.");
+        }
+
+        // =========================================
+        // SPRAWDZENIE "TAK"
+        // =========================================
+
+        if (message && isApproval(message) && pendingPosts[senderId]) {
+            const pending = pendingPosts[senderId];
+
+            console.log("========================================");
+            console.log("UŻYTKOWNIK ZATWIERDZIŁ PUBLIKACJĘ!");
+            console.log("Treść posta:", pending.text);
+            console.log("Zdjęcie:", pending.imageUrl || "(brak)");
+            console.log(
+                "Kategoria:",
+                getCategory(pending.category).label
             );
 
-
-            console.log(
-                "TreĹ›Ä‡:",
-                message || "(brak)"
-            );
-
-
-            console.log(
-                "ZdjÄ™cie:",
-                imageUrl || "(brak)"
-            );
-
-
-            if (!senderId) {
-
-                res.sendStatus(200);
-
-                return;
-
-            }
-// =========================================
-// ANTYSPAM
-// =========================================
-// =========================================
-// TRWAĹY BAN ANTYSPAM
-// =========================================
-
-const spamBan =
-    checkPermanentSpamBan(senderId);
-
-if (spamBan.banned) {
-
-    console.warn(
-        `ANTYSPAM: ${senderId} - ` +
-        `AKTYWNY BAN. ` +
-        `PozostaĹ‚o ${spamBan.remaining} sekund.`
-    );
-
-    res.sendStatus(200);
-
-    return;
-
-}
-const spamCheck =
-    checkSpam(
-        senderId,
-        message,
-        imageUrl
-    );
-
-if (!spamCheck.allowed) {
-
-    console.log(
-        "ANTYSPAM - odrzucono wiadomoĹ›Ä‡:",
-        senderId,
-        spamCheck.reason
-    );
-
-    // Nie uruchamiamy AI.
-    res.sendStatus(200);
-
-    return;
-
-}
-
-
-// =========================================
-// GLOBALNY LIMIT AI
-// =========================================
-
-if (!checkGlobalLimit()) {
-
-    console.error(
-        "GLOBALNY LIMIT - AI NIE ZOSTAĹO URUCHOMIONE."
-    );
-
-    res.sendStatus(200);
-
-    return;
-
-}
-
-            // =========================================
-            // ZAPISUJEMY OSTATNIE ZDJÄCIE
-            // =========================================
-
-            if (imageUrl) {
-
-                userImages[senderId] =
-                    imageUrl;
-
-
-                saveJSON(
-                    USER_IMAGES_FILE,
-                    userImages
+            try {
+                const result = await publishFacebookPost(
+                    pending.text,
+                    pending.imageUrl,
+                    pending.category || "ogloszenia"
                 );
 
+                console.log("POST OPUBLIKOWANY:", result);
+                delete pendingPosts[senderId];
+                saveJSON(PENDING_POSTS_FILE, pendingPosts);
+                delete userImages[senderId];
+                saveJSON(USER_IMAGES_FILE, userImages);
 
-                console.log(
-                    "ZapamiÄ™tano zdjÄ™cie uĹĽytkownika."
+                await sendFacebookMessage(
+                    senderId,
+                    `✅ Gotowe! Ogłoszenie zostało opublikowane na Spotted Brodnica.\n\n${getCategory(pending.category).label}`
                 );
+            } catch (publishError) {
+                console.error("========================================");
+                console.error("BŁĄD PUBLIKACJI:");
+                console.error(publishError);
+                console.error("========================================");
 
+                await sendFacebookMessage(
+                    senderId,
+                    "⚠️ Ogłoszenie jest gotowe, ale wystąpił problem podczas publikacji. Nie opublikowałem go ponownie, żeby nie stworzyć duplikatu."
+                );
             }
 
+            res.sendStatus(200);
+            return;
+        }
 
-            // =========================================
-            // SPRAWDZENIE "TAK"
-            // =========================================
+        // =========================================
+        // HISTORIA ROZMOWY
+        // =========================================
 
-            if (
-                message &&
-                isApproval(message) &&
-                pendingPosts[senderId]
-            ) {
+        let history = conversations[senderId] || [];
+        let userContent;
 
-                const pending =
-                    pendingPosts[senderId];
-
-
-                console.log(
-                    "========================================"
-                );
-
-
-                console.log(
-                    "UĹ»YTKOWNIK ZATWIERDZIĹ PUBLIKACJÄ!"
-                );
-
-
-                console.log(
-                    "TreĹ›Ä‡ posta:",
-                    pending.text
-                );
-
-
-                console.log(
-                    "ZdjÄ™cie:",
-                    pending.imageUrl || "(brak)"
-                );
-
-
-                console.log(
-                    "Kategoria:",
-                    getCategory(
-                        pending.category
-                    ).label
-                );
-
-
-                try {
-
-                    const result =
-                        await publishFacebookPost(
-
-                            pending.text,
-
-                            pending.imageUrl,
-
-                            pending.category ||
-                                "ogloszenia"
-
-                        );
-
-
-                    console.log(
-                        "POST OPUBLIKOWANY:",
-                        result
-                    );
-
-
-                    // ---------------------------------
-                    // USUWAMY OCZEKUJÄ„CE OGĹOSZENIE
-                    // ---------------------------------
-
-                    delete pendingPosts[senderId];
-
-
-                    saveJSON(
-                        PENDING_POSTS_FILE,
-                        pendingPosts
-                    );
-
-
-                    // ---------------------------------
-                    // USUWAMY ZDJÄCIE
-                    // ---------------------------------
-
-                    delete userImages[senderId];
-
-
-                    saveJSON(
-                        USER_IMAGES_FILE,
-                        userImages
-                    );
-
-
-                    await sendFacebookMessage(
-
-                        senderId,
-
-                        `âś… Gotowe! OgĹ‚oszenie zostaĹ‚o opublikowane na Spotted Brodnica.
-
-${getCategory(pending.category).label}`
-
-                    );
-
-
-                } catch (publishError) {
-
-                    console.error(
-                        "========================================"
-                    );
-
-
-                    console.error(
-                        "BĹÄ„D PUBLIKACJI:"
-                    );
-
-
-                    console.error(
-                        publishError
-                    );
-
-
-                    console.error(
-                        "========================================"
-                    );
-
-
-                    await sendFacebookMessage(
-
-                        senderId,
-
-                        "âš ď¸Ź OgĹ‚oszenie jest gotowe, ale wystÄ…piĹ‚ problem podczas publikacji. Nie opublikowaĹ‚em go ponownie, ĹĽeby nie stworzyÄ‡ duplikatu."
-
-                    );
-
+        if (imageUrl) {
+            userContent = [
+                {
+                    type: "input_text",
+                    text:
+                        message ||
+                        "Użytkownik wysłał zdjęcie. Przeanalizuj zdjęcie i wykorzystaj je w przygotowaniu ogłoszenia."
+                },
+                {
+                    type: "input_image",
+                    image_url: imageUrl
                 }
+            ];
+        } else {
+            userContent = message || "";
+        }
 
+        history.push({ role: "user", content: userContent });
+        if (history.length > 30) history = history.slice(-30);
 
-                res.sendStatus(200);
+        const response = await openai.responses.create({
+            model: "gpt-5.6",
+            input: [
+                {
+                    role: "system",
+                    content: `
+Jesteś AI obsługującym profil Spotted Brodnica.
 
-                return;
+Twoim zadaniem jest prowadzenie rozmowy z mieszkańcami Brodnicy i okolic oraz przygotowywanie ogłoszeń do publikacji na stronie Spotted Brodnica.
 
-            }
+Pamiętaj całą historię rozmowy.
 
+Nie pytaj ponownie o informacje, które użytkownik już podał.
 
-            // =========================================
-            // HISTORIA ROZMOWY
-            // =========================================
-
-            let history =
-                conversations[senderId] || [];
-
-
-            // =========================================
-            // TREĹšÄ† DLA OPENAI
-            // =========================================
-
-            let userContent;
-
-
-            if (imageUrl) {
-
-                userContent = [
-
-                    {
-
-                        type:
-                            "input_text",
-
-                        text:
-                            message ||
-                            "UĹĽytkownik wysĹ‚aĹ‚ zdjÄ™cie. Przeanalizuj zdjÄ™cie i wykorzystaj je w przygotowaniu ogĹ‚oszenia."
-
-                    },
-
-                    {
-
-                        type:
-                            "input_image",
-
-                        image_url:
-                            imageUrl
-
-                    }
-
-                ];
-
-            } else {
-
-                userContent =
-                    message || "";
-
-            }
-
-
-            // =========================================
-            // DODAJEMY WIADOMOĹšÄ† DO HISTORII
-            // =========================================
-
-            history.push({
-
-                role:
-                    "user",
-
-                content:
-                    userContent
-
-            });
-
-
-            // =========================================
-            // MAKSYMALNIE 30 WIADOMOĹšCI
-            // =========================================
-
-            if (
-                history.length > 30
-            ) {
-
-                history =
-                    history.slice(-30);
-
-            }
-
-
-            // =========================================
-            // OPENAI
-            // =========================================
-
-            const response =
-                await openai.responses.create({
-
-                    model:
-                        "gpt-5.6",
-
-                    input: [
-
-                        {
-
-                            role:
-                                "system",
-
-                            content: `
-
-JesteĹ› AI obsĹ‚ugujÄ…cym profil Spotted Brodnica.
-
-Twoim zadaniem jest prowadzenie rozmowy z mieszkaĹ„cami Brodnicy i okolic oraz przygotowywanie ogĹ‚oszeĹ„ do publikacji na stronie Spotted Brodnica.
-
-PamiÄ™taj caĹ‚Ä… historiÄ™ rozmowy.
-
-Nie pytaj ponownie o informacje, ktĂłre uĹĽytkownik juĹĽ podaĹ‚.
-
-Nie wymyĹ›laj informacji.
+Nie wymyślaj informacji.
 
 Odpowiadaj zawsze po polsku.
 
-Pisz naturalnie, krĂłtko i konkretnie.
-
+Pisz naturalnie, krótko i konkretnie.
 
 ========================================
-KATEGORIE OGĹOSZEĹ
+KATEGORIE OGŁOSZEŃ
 ========================================
 
-KaĹĽde gotowe ogĹ‚oszenie MUSI mieÄ‡ dokĹ‚adnie jednÄ… kategoriÄ™.
+Każde gotowe ogłoszenie MUSI mieć dokładnie jedną kategorię.
 
-DostÄ™pne identyfikatory:
+Dostępne identyfikatory:
 
-wypadek_zdarzenie = đźš¨ WYPADEK / ZDARZENIE
-
-zwierzeta = đźľ ZAGINIONE / ZNALEZIONE ZWIERZÄ
-
-droga = đźš— UTRUDNIENIA NA DRODZE
-
-osoba = đź”Ť ZAGINÄ„Ĺ / ZNALEZIONO OSOBÄ
-
-informacja = đź“˘ WAĹ»NA INFORMACJA
-
-firma = đźŹŞ FIRMA / REKLAMA
-
-ogloszenia = đźŹ  OGĹOSZENIA
-
-zdjecie_film = đź“¸ ZDJÄCIE / FILM
-
+wypadek_zdarzenie = 🚨 WYPADEK / ZDARZENIE
+zwierzeta = 🐾 ZAGINIONE / ZNALEZIONE ZWIERZĘ
+droga = 🚧 UTRUDNIENIA NA DRODZE
+osoba = 🔎 ZAGINĄŁ / ZNALEZIONO OSOBĘ
+informacja = 📢 WAŻNA INFORMACJA
+firma = 🏪 FIRMA / REKLAMA
+ogloszenia = 📢 OGŁOSZENIA
+zdjecie_film = 📸 ZDJĘCIE / FILM
 
 ========================================
 ZASADY WYBORU KATEGORII
 ========================================
 
-JeĹĽeli uĹĽytkownik zgĹ‚asza znalezione lub zaginione zwierzÄ™:
+Jeżeli użytkownik zgłasza znalezione lub zaginione zwierzę:
+→ zwierzeta
 
-â†’ zwierzeta
-
-
-JeĹĽeli uĹĽytkownik zgĹ‚asza:
-
+Jeżeli użytkownik zgłasza:
 - wypadek
-- kolizjÄ™
-- poĹĽar
+- kolizję
+- pożar
 - niebezpieczne zdarzenie
-- inne nagĹ‚e zdarzenie
+- inne nagłe zdarzenie
 
-â†’ wypadek_zdarzenie
+→ wypadek_zdarzenie
 
-
-JeĹĽeli uĹĽytkownik zgĹ‚asza:
-
+Jeżeli użytkownik zgłasza:
 - korek
 - remont drogi
-- zamkniÄ™tÄ… drogÄ™
+- zamkniętą drogę
 - objazd
 - utrudnienia
 - problemy z przejazdem
 
-â†’ droga
+→ droga
 
-
-JeĹĽeli uĹĽytkownik zgĹ‚asza:
-
-- zaginiÄ™cie osoby
+Jeżeli użytkownik zgłasza:
+- zaginięcie osoby
 - poszukiwanie osoby
 - znalezienie osoby
 
-â†’ osoba
+→ osoba
 
-
-JeĹĽeli uĹĽytkownik przekazuje:
-
-- waĹĽny komunikat
+Jeżeli użytkownik przekazuje:
+- ważny komunikat
 - alert
-- ostrzeĹĽenie
-- istotnÄ… informacjÄ™ lokalnÄ…
+- ostrzeżenie
+- istotną informację lokalną
 
-â†’ informacja
+→ informacja
 
-
-JeĹĽeli uĹĽytkownik reklamuje:
-
-- firmÄ™
+Jeżeli użytkownik reklamuje:
+- firmę
 - sklep
-- usĹ‚ugÄ™
-- promocjÄ™
-- dziaĹ‚alnoĹ›Ä‡ gospodarczÄ…
+- usługę
+- promocję
+- działalność gospodarczą
 
-â†’ firma
+→ firma
 
-
-JeĹĽeli uĹĽytkownik:
-
+Jeżeli użytkownik:
 - sprzedaje
 - kupuje
 - wynajmuje
 - oddaje
 - zamienia
 - szuka produktu
-- szuka usĹ‚ugi
+- szuka usługi
 
-â†’ ogloszenia
+→ ogloszenia
 
+Jeżeli użytkownik przesyła przede wszystkim zdjęcie lub film lokalny i materiał nie pasuje do powyższych kategorii:
+→ zdjecie_film
 
-JeĹĽeli uĹĽytkownik przesyĹ‚a przede wszystkim zdjÄ™cie lub film lokalny i materiaĹ‚ nie pasuje do powyĹĽszych kategorii:
+Nie wybieraj kategorii tylko na podstawie pojedynczego słowa.
 
-â†’ zdjecie_film
-
-
-Nie wybieraj kategorii tylko na podstawie pojedynczego sĹ‚owa.
-
-UwzglÄ™dnij caĹ‚y kontekst rozmowy.
-
+Uwzględnij cały kontekst rozmowy.
 
 ========================================
-ZWIERZÄTA
+ZWIERZĘTA
 ========================================
 
-JeĹĽeli uĹĽytkownik zgĹ‚asza znalezione lub zaginione zwierzÄ™, ustal:
-
+Jeżeli użytkownik zgłasza znalezione lub zaginione zwierzę, ustal:
 - gatunek
 - znalezione czy zaginione
 - miejsce
 - kiedy
-- wyglÄ…d
+- wygląd
 - umaszczenie
-- pĹ‚eÄ‡, jeĹ›li znana
+- płeć, jeśli znana
 - kontakt
-- zdjÄ™cie, jeĹ›li dostÄ™pne
+- zdjęcie, jeśli dostępne
 
-JeĹĽeli uĹĽytkownik wysĹ‚aĹ‚ zdjÄ™cie, przeanalizuj je i wykorzystaj rzeczywiĹ›cie widoczne informacje.
+Jeżeli użytkownik wysłał zdjęcie, przeanalizuj je i wykorzystaj rzeczywiście widoczne informacje.
 
-Nie wymyĹ›laj rasy, wieku ani pĹ‚ci, jeĹ›li nie moĹĽna ich wiarygodnie okreĹ›liÄ‡.
-
-
-========================================
-INNE OGĹOSZENIA
-========================================
-
-PomĂłĹĽ ustaliÄ‡ wszystkie informacje potrzebne do stworzenia dobrego ogĹ‚oszenia.
-
+Nie wymyślaj rasy, wieku ani płci, jeśli nie można ich wiarygodnie określić.
 
 ========================================
-ZDJÄCIA
+INNE OGŁOSZENIA
 ========================================
 
-JeĹĽeli uĹĽytkownik wysĹ‚aĹ‚ zdjÄ™cie, zapamiÄ™taj, ĹĽe zdjÄ™cie jest juĹĽ dostÄ™pne.
-
-Nie pytaj ponownie o zdjÄ™cie, jeĹĽeli uĹĽytkownik juĹĽ je wysĹ‚aĹ‚.
-
+Pomóż ustalić wszystkie informacje potrzebne do stworzenia dobrego ogłoszenia.
 
 ========================================
-GOTOWE OGĹOSZENIE
+ZDJĘCIA
 ========================================
 
-Kiedy masz wystarczajÄ…cÄ… iloĹ›Ä‡ informacji, przygotuj gotowe ogĹ‚oszenie.
+Jeżeli użytkownik wysłał zdjęcie, zapamiętaj, że zdjęcie jest już dostępne.
 
-OgĹ‚oszenie MUSI byÄ‡ zapisane dokĹ‚adnie w takim formacie:
+Nie pytaj ponownie o zdjęcie, jeżeli użytkownik już je wysłał.
+
+========================================
+GOTOWE OGŁOSZENIE
+========================================
+
+Kiedy masz wystarczającą ilość informacji, przygotuj gotowe ogłoszenie.
+
+Ogłoszenie MUSI być zapisane dokładnie w takim formacie:
 
 [KATEGORIA]
 
@@ -1955,203 +859,78 @@ identyfikator_kategorii
 
 [OGLOSZENIE]
 
-treĹ›Ä‡ gotowego ogĹ‚oszenia
+treść gotowego ogłoszenia
 
 [/OGLOSZENIE]
 
-NastÄ™pnie napisz:
+Następnie napisz:
 
-"Czy zatwierdzasz ogĹ‚oszenie do publikacji?"
+"Czy zatwierdzasz ogłoszenie do publikacji?"
 
 Nie publikujesz samodzielnie.
 
-Publikacja nastÄ…pi dopiero po wyraĹşnym potwierdzeniu uĹĽytkownika, np. "tak", "zatwierdzam", "publikuj".
-
+Publikacja nastąpi dopiero po wyraźnym potwierdzeniu użytkownika, np. "tak", "zatwierdzam", "publikuj".
 
 ========================================
-WAĹ»NE
+WAŻNE
 ========================================
 
-JeĹĽeli uĹĽytkownik nie podaĹ‚ jeszcze wszystkich waĹĽnych informacji, NIE twĂłrz ogĹ‚oszenia.
+Jeżeli użytkownik nie podał jeszcze wszystkich ważnych informacji, NIE twórz ogłoszenia.
 
-Zadaj krĂłtkie pytanie o brakujÄ…cÄ… informacjÄ™.
+Zadaj krótkie pytanie o brakującą informację.
 
-Nie pytaj ponownie o informacje, ktĂłre uĹĽytkownik juĹĽ podaĹ‚.
+Nie pytaj ponownie o informacje, które użytkownik już podał.
 
-JeĹĽeli informacje sÄ… kompletne â€” przygotuj ogĹ‚oszenie.
-
+Jeżeli informacje są kompletne — przygotuj ogłoszenie.
 `
+                },
+                ...history
+            ]
+        });
 
-                        },
+        const answer = response.output_text;
+        console.log("Odpowiedź AI:", answer);
 
-                        ...history
+        const postText = extractPost(answer);
+        if (postText) {
+            console.log("Wykryto gotowe ogłoszenie.");
+            const category = extractCategory(answer);
+            console.log("Kategoria:", getCategory(category).label);
 
-                    ]
+            const savedImage = userImages[senderId] || null;
+            pendingPosts[senderId] = {
+                text: postText,
+                category: category,
+                imageUrl: savedImage,
+                createdAt: new Date().toISOString()
+            };
 
-                });
-
-
-            // =========================================
-            // ODPOWIEDĹą AI
-            // =========================================
-
-            const answer =
-                response.output_text;
-
-
+            saveJSON(PENDING_POSTS_FILE, pendingPosts);
+            console.log("Ogłoszenie oczekuje na zatwierdzenie.");
             console.log(
-                "OdpowiedĹş AI:",
-                answer
+                "Zdjęcie przypisane do ogłoszenia:",
+                savedImage || "(brak)"
             );
-
-
-            // =========================================
-            // CZY AI PRZYGOTOWAĹO OGĹOSZENIE?
-            // =========================================
-
-            const postText =
-                extractPost(answer);
-
-
-            if (postText) {
-
-                console.log(
-                    "Wykryto gotowe ogĹ‚oszenie."
-                );
-
-
-                // -------------------------------------
-                // WYCIÄ„GAMY KATEGORIÄ
-                // -------------------------------------
-
-                const category =
-                    extractCategory(answer);
-
-
-                console.log(
-                    "Kategoria:",
-                    getCategory(category).label
-                );
-
-
-                // -------------------------------------
-                // NAJNOWSZE ZDJÄCIE
-                // -------------------------------------
-
-                const savedImage =
-                    userImages[senderId] ||
-                    null;
-
-
-                pendingPosts[senderId] = {
-
-                    text:
-                        postText,
-
-                    category:
-                        category,
-
-                    imageUrl:
-                        savedImage,
-
-                    createdAt:
-                        new Date().toISOString()
-
-                };
-
-
-                saveJSON(
-                    PENDING_POSTS_FILE,
-                    pendingPosts
-                );
-
-
-                console.log(
-                    "OgĹ‚oszenie oczekuje na zatwierdzenie."
-                );
-
-
-                console.log(
-                    "ZdjÄ™cie przypisane do ogĹ‚oszenia:",
-                    savedImage || "(brak)"
-                );
-
-
-                console.log(
-                    "Kategoria przypisana do ogĹ‚oszenia:",
-                    getCategory(category).label
-                );
-
-            }
-
-
-            // =========================================
-            // ZAPIS ODPOWIEDZI AI
-            // =========================================
-
-            history.push({
-
-                role:
-                    "assistant",
-
-                content:
-                    answer
-
-            });
-
-
-            conversations[senderId] =
-                history;
-
-
-            saveJSON(
-                CONVERSATIONS_FILE,
-                conversations
+            console.log(
+                "Kategoria przypisana do ogłoszenia:",
+                getCategory(category).label
             );
-
-
-            // =========================================
-            // ODPOWIEDĹą NA MESSENGERZE
-            // =========================================
-
-            await sendFacebookMessage(
-
-                senderId,
-
-                answer
-
-            );
-
-
-        } catch (error) {
-
-            console.error(
-                "========================================"
-            );
-
-
-            console.error(
-                "BĹÄ„D:"
-            );
-
-
-            console.error(
-                error
-            );
-
-
-            console.error(
-                "========================================"
-            );
-
         }
 
+        history.push({ role: "assistant", content: answer });
+        conversations[senderId] = history;
+        saveJSON(CONVERSATIONS_FILE, conversations);
 
-        res.sendStatus(200);
-
+        await sendFacebookMessage(senderId, answer);
+    } catch (error) {
+        console.error("========================================");
+        console.error("BŁĄD:");
+        console.error(error);
+        console.error("========================================");
     }
-);
 
+    res.sendStatus(200);
+});
 
 // =====================================================
 // START SERWERA
@@ -2159,24 +938,18 @@ JeĹĽeli informacje sÄ… kompletne â€” przygotuj ogĹ‚oszenie.
 
 const PORT = 3000;
 
+app.listen(PORT, () => {
+    console.log(`Server działa na porcie ${PORT}`);
+});
 
-app.listen(
-    PORT,
-    () => {
-
-        console.log(
-            `Server dziaĹ‚a na porcie ${PORT}`
-        );
-
-    }
-);app.get("/privacy-policy", (req, res) => {
+app.get("/privacy-policy", (req, res) => {
     res.send(`
 <!DOCTYPE html>
 <html lang="pl">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Polityka prywatnoďż˝ci ďż˝ Spotted Brodnica AI</title>
+<title>Polityka prywatności — Spotted Brodnica AI</title>
 <style>
 body {
     font-family: Arial, sans-serif;
@@ -2192,89 +965,86 @@ h2 { margin-top: 30px; }
 </head>
 <body>
 
-<h1>Polityka prywatnoďż˝ci</h1>
+<h1>Polityka prywatności</h1>
 <p><strong>Spotted Brodnica AI</strong></p>
 <p>Ostatnia aktualizacja: 15 sierpnia 2026 r.</p>
 
-<h2>1. Informacje ogďż˝lne</h2>
+<h2>1. Informacje ogólne</h2>
 <p>
-Spotted Brodnica AI umoďż˝liwia uďż˝ytkownikom przesyďż˝anie zgďż˝oszeďż˝
-za poďż˝rednictwem Facebook Messenger oraz przygotowywanie ogďż˝oszeďż˝
+Spotted Brodnica AI umożliwia użytkownikom przesyłanie zgłoszeń
+za pośrednictwem Facebook Messenger oraz przygotowywanie ogłoszeń
 na potrzeby strony Spotted Brodnica.
 </p>
 
 <h2>2. Przetwarzane dane</h2>
-<p>System moďż˝e otrzymywaďż˝:</p>
+<p>System może otrzymywać:</p>
 <ul>
-<li>treďż˝ďż˝ wiadomoďż˝ci,</li>
-<li>zdjďż˝cia i materiaďż˝y przesďż˝ane przez uďż˝ytkownika,</li>
-<li>identyfikator uďż˝ytkownika Facebook/Messenger przekazywany przez Meta,</li>
-<li>informacje niezbďż˝dne do obsďż˝ugi zgďż˝oszenia.</li>
+<li>treść wiadomości,</li>
+<li>zdjęcia i materiały przesłane przez użytkownika,</li>
+<li>identyfikator użytkownika Facebook/Messenger przekazywany przez Meta,</li>
+<li>informacje niezbędne do obsługi zgłoszenia.</li>
 </ul>
 
 <h2>3. Cel przetwarzania</h2>
 <p>
-Dane sďż˝ wykorzystywane do obsďż˝ugi zgďż˝oszeďż˝, przygotowywania ogďż˝oszeďż˝,
-kontaktu z uďż˝ytkownikiem, publikowania zaakceptowanych ogďż˝oszeďż˝
-oraz zapewnienia bezpieczeďż˝stwa systemu.
+Dane są wykorzystywane do obsługi zgłoszeń, przygotowywania ogłoszeń,
+kontaktu z użytkownikiem, publikowania zaakceptowanych ogłoszeń
+oraz zapewnienia bezpieczeństwa systemu.
 </p>
 
 <h2>4. Sztuczna inteligencja</h2>
 <p>
 Spotted Brodnica AI wykorzystuje technologie sztucznej inteligencji
-do analizy treďż˝ci wiadomoďż˝ci i przygotowywania propozycji ogďż˝oszeďż˝.
-Przed publikacjďż˝ ogďż˝oszenie moďż˝e zostaďż˝ przedstawione uďż˝ytkownikowi
+do analizy treści wiadomości i przygotowywania propozycji ogłoszeń.
+Przed publikacją ogłoszenie może zostać przedstawione użytkownikowi
 do akceptacji.
 </p>
 
 <h2>5. Facebook i Meta</h2>
 <p>
 System wykorzystuje Facebook Messenger oraz interfejsy programistyczne
-Meta do odbierania i wysyďż˝ania wiadomoďż˝ci.
+Meta do odbierania i wysyłania wiadomości.
 </p>
 
-<h2>6. Udostďż˝pnianie danych</h2>
+<h2>6. Udostępnianie danych</h2>
 <p>
-Dane nie sďż˝ sprzedawane. Mogďż˝ byďż˝ przetwarzane przez dostawcďż˝w usďż˝ug
-technicznych niezbďż˝dnych do dziaďż˝ania systemu.
+Dane nie są sprzedawane. Mogą być przetwarzane przez dostawców usług
+technicznych niezbędnych do działania systemu.
 </p>
 
 <h2>7. Okres przechowywania</h2>
 <p>
-Dane sďż˝ przechowywane przez okres niezbďż˝dny do obsďż˝ugi zgďż˝oszenia,
-zapewnienia bezpieczeďż˝stwa systemu oraz realizacji obowiďż˝zkďż˝w
-wynikajďż˝cych z obowiďż˝zujďż˝cych przepisďż˝w.
+Dane są przechowywane przez okres niezbędny do obsługi zgłoszenia,
+zapewnienia bezpieczeństwa systemu oraz realizacji obowiązków
+wynikających z obowiązujących przepisów.
 </p>
 
-<h2>8. Prawa uďż˝ytkownika</h2>
+<h2>8. Prawa użytkownika</h2>
 <p>
-Uďż˝ytkownik moďż˝e, w zakresie przewidzianym prawem, ďż˝ďż˝daďż˝ dostďż˝pu do
-swoich danych, ich sprostowania, usuniďż˝cia lub ograniczenia przetwarzania.
+Użytkownik może, w zakresie przewidzianym prawem, żądać dostępu do
+swoich danych, ich sprostowania, usunięcia lub ograniczenia przetwarzania.
 </p>
 
-<h2>9. Usuniďż˝cie danych</h2>
+<h2>9. Usunięcie danych</h2>
 <p>
-W celu usuniďż˝cia danych przekazanych do systemu Spotted Brodnica AI
-uďż˝ytkownik moďż˝e skontaktowaďż˝ siďż˝ ze Spotted Brodnica za poďż˝rednictwem
-kanaďż˝u, przez ktďż˝ry przesďż˝aďż˝ zgďż˝oszenie.
+W celu usunięcia danych przekazanych do systemu Spotted Brodnica AI
+użytkownik może skontaktować się ze Spotted Brodnica za pośrednictwem
+kanału, przez który przesłał zgłoszenie.
 </p>
 
-<h2>10. Bezpieczeďż˝stwo</h2>
+<h2>10. Bezpieczeństwo</h2>
 <p>
-Podejmujemy odpowiednie ďż˝rodki techniczne i organizacyjne majďż˝ce
-na celu ochronďż˝ danych przed nieuprawnionym dostďż˝pem i wykorzystaniem.
+Podejmujemy odpowiednie środki techniczne i organizacyjne mające
+na celu ochronę danych przed nieuprawnionym dostępem i wykorzystaniem.
 </p>
 
 <h2>11. Kontakt</h2>
 <p>
-W sprawach dotyczďż˝cych prywatnoďż˝ci moďż˝na skontaktowaďż˝ siďż˝ ze
-Spotted Brodnica za poďż˝rednictwem strony Spotted Brodnica.
+W sprawach dotyczących prywatności można skontaktować się ze
+Spotted Brodnica za pośrednictwem strony Spotted Brodnica.
 </p>
 
 </body>
 </html>
     `);
 });
-
-
-
